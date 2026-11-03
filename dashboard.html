@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AntiCheat Dashboard</title>
+<style>
+  :root { --bg:#0f1218; --card:#171c26; --line:#262d3b; --text:#e6e9ef; --mute:#8a93a6; --red:#ef4444; --amber:#f59e0b; --green:#22c55e; --blue:#3b82f6; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui, "Noto Sans Thai", sans-serif; }
+  header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; }
+  main { padding:16px 20px; display:grid; gap:16px; grid-template-columns: 1.2fr 1fr; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; overflow:auto; max-height:75vh; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mute); font-weight:500; font-size:12px; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:99px; font-size:12px; margin-right:4px; background:#222a3a; }
+  .tag.speed { color:var(--amber); } .tag.fly { color:var(--blue); } .tag.noclip { color:#c084fc; }
+  .tag.teleport { color:#f472b6; } .tag.ban, .tag.kick { color:var(--red); }
+  button, input { font:inherit; border-radius:7px; border:1px solid var(--line); background:#0d1118; color:var(--text); padding:6px 10px; }
+  button { cursor:pointer; } button:hover { border-color:var(--mute); }
+  button.danger { background:#3b1219; border-color:#7f1d1d; color:#fecaca; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #login { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; }
+  #login form { background:var(--card); padding:24px; border-radius:12px; border:1px solid var(--line); display:grid; gap:10px; width:300px; }
+  .banned { color:var(--red); } .mute { color:var(--mute); }
+  .wide { grid-column: 1 / -1; }
+  .tag.high { color:var(--red); } .tag.warn { color:var(--amber); } .tag.clean { color:var(--green); }
+  a.link { color:var(--blue); text-decoration:none; font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <form id="loginForm">
+    <h1>เข้าสู่ระบบแอดมิน</h1>
+    <input id="pw" type="password" placeholder="รหัสผ่านแอดมิน" autocomplete="current-password" required>
+    <button type="submit">เข้าสู่ระบบ</button>
+    <div id="loginErr" class="banned"></div>
+  </form>
+</div>
+
+<header>
+  <h1>AntiCheat Dashboard</h1>
+  <div class="row">
+    <a class="link" href="/scan" target="_blank">หน้าสแกนของผู้เล่น</a>
+    <input id="search" placeholder="ค้นหาชื่อ / UserId / รหัสสแกน">
+    <span class="mute" id="status"></span>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>ผู้เล่นที่ถูกตรวจพบ</h2>
+    <table>
+      <thead><tr><th>ผู้เล่น</th><th>การตรวจพบ</th><th>ล่าสุด</th><th></th></tr></thead>
+      <tbody id="players"></tbody>
+    </table>
+  </section>
+  <section class="card">
+    <h2>เหตุการณ์ล่าสุด</h2>
+    <table>
+      <thead><tr><th>เวลา</th><th>ผู้เล่น</th><th>ประเภท</th><th>รายละเอียด</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table>
+  </section>
+  <section class="card wide">
+    <h2>ผลสแกนเครื่องผู้เล่น</h2>
+    <table>
+      <thead><tr><th>เวลา</th><th>รหัส</th><th>ชื่อ Roblox</th><th>ผล</th></tr></thead>
+      <tbody id="scans"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+let pw = sessionStorage.getItem("pw") || "";
+let data = { players: [], events: [], scans: [] };
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  kids.forEach(k => e.append(k));
+  return e;
+}
+const fmt = t => new Date(t * 1000).toLocaleString("th-TH", { hour12: false });
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", "x-admin": pw }
+  });
+  if (r.status === 401) throw new Error("unauthorized");
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    data = await api("/api/admin/overview");
+    document.getElementById("login").style.display = "none";
+    document.getElementById("status").textContent = "อัปเดต " + new Date().toLocaleTimeString("th-TH", { hour12: false });
+    render();
+  } catch {
+    document.getElementById("login").style.display = "flex";
+  }
+}
+
+function render() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const pb = document.getElementById("players");
+  pb.replaceChildren();
+  data.players
+    .filter(p => !q || p.name.toLowerCase().includes(q) || String(p.userId).includes(q))
+    .forEach(p => {
+      const tags = el("td");
+      Object.entries(p.counts).forEach(([k, n]) =>
+        tags.append(el("span", { className: "tag " + k, textContent: k + " ×" + n })));
+      const nameCell = el("td", {}, el("b", { textContent: p.name }),
+        el("div", { className: "mute", textContent: "ID " + p.userId }));
+      if (p.banned) nameCell.append(el("div", { className: "banned", textContent: "ถูกแบนแล้ว" }));
+      const act = el("td", {}, el("div", { className: "row" },
+        el("button", { textContent: "เตะ", onclick: () => doAction("kick", p) }),
+        el("button", { className: "danger", textContent: "แบน", onclick: () => doAction("ban", p) })));
+      pb.append(el("tr", {}, nameCell, tags, el("td", { textContent: fmt(p.last) }), act));
+    });
+
+  const eb = document.getElementById("events");
+  eb.replaceChildren();
+  data.events
+    .filter(e => !q || e.name.toLowerCase().includes(q) || String(e.userId).includes(q))
+    .forEach(e => eb.append(el("tr", {},
+      el("td", { textContent: fmt(e.time) }),
+      el("td", { textContent: e.name }),
+      el("td", {}, el("span", { className: "tag " + e.kind, textContent: e.kind })),
+      el("td", { className: "mute", textContent: e.detail }))));
+
+  const sb = document.getElementById("scans");
+  sb.replaceChildren();
+  (data.scans || [])
+    .filter(s => !q || s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q))
+    .forEach(s => {
+      const res = el("td");
+      if (!s.hits.length) {
+        res.append(el("span", { className: "tag clean", textContent: "สะอาด" }));
+      } else {
+        s.hits.forEach(h => res.append(el("span", {
+          className: "tag " + h.severity,
+          textContent: h.label + " (" + h.type + ": " + h.match + ")"
+        })));
+      }
+      sb.append(el("tr", {},
+        el("td", { textContent: fmt(s.time) }),
+        el("td", {}, el("b", { textContent: s.code })),
+        el("td", { textContent: s.name }),
+        res));
+    });
+}
+
+async function doAction(kind, p) {
+  const reason = prompt((kind === "ban" ? "เหตุผลการแบน" : "เหตุผลการเตะ") + " (" + p.name + ")", "cheating");
+  if (reason === null) return;
+  let seconds;
+  if (kind === "ban") {
+    const days = prompt("แบนกี่วัน? (0 = ถาวร)", "7");
+    if (days === null) return;
+    seconds = Math.round(Number(days) * 86400) || 0;
+  }
+  await api("/api/admin/" + kind, { method: "POST", body: JSON.stringify({ userId: p.userId, reason, seconds }) });
+  refresh();
+}
+
+document.getElementById("loginForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  pw = document.getElementById("pw").value;
+  try {
+    await api("/api/admin/overview");
+    sessionStorage.setItem("pw", pw);
+    document.getElementById("loginErr").textContent = "";
+    refresh();
+  } catch {
+    document.getElementById("loginErr").textContent = "รหัสผ่านไม่ถูกต้อง";
+  }
+});
+document.getElementById("search").addEventListener("input", render);
+
+refresh();
+setInterval(() => pw && refresh(), 10000);
+</script>
+</body>
+</html>
